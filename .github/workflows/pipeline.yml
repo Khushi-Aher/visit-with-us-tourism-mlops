@@ -143,34 +143,6 @@ jobs:
           test -f deployment/model.joblib
           test -f deployment/model_metadata.json
           test -f deployment/requirements.txt
-          echo "Deployment package verified."
 
-      - name: Verify live Streamlit application
-        env:
-          APP_URL: https://visit-with-us-tourism-mlops-dr88gm2yuvvjjpufbc5vp6.streamlit.app
-        run: |
-          python - <<'PY'
-          import os
-          import time
-          import urllib.request
-
-          url = os.environ["APP_URL"]
-
-          for attempt in range(5):
-              try:
-                  response = urllib.request.urlopen(url, timeout=30)
-                  status = response.status
-                  print(f"Streamlit app HTTP status: {status}")
-
-                  if status == 200:
-                      print("Live Streamlit application verified successfully.")
-                      break
-
-              except Exception as e:
-                  print(f"Attempt {attempt + 1} failed: {e}")
-
-              time.sleep(15)
-
-          else:
-              raise RuntimeError("Live Streamlit application could not be verified.")
-          PY
+          echo "Deployment package verified successfully."
+          echo "Streamlit application is deployed separately on Streamlit Community Cloud."
