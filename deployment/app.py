@@ -13,17 +13,24 @@ MODEL_PATH = BASE / "model.joblib"
 META_PATH = BASE / "model_metadata.json"
 
 
-model = joblib.load(MODEL_PATH)
-
-with open(META_PATH, "r") as file:
-    metadata = json.load(file)
-
-
 st.set_page_config(
     page_title="Wellness Tourism Predictor",
     page_icon="✈️",
     layout="wide"
 )
+
+
+@st.cache_resource
+def load_model():
+    return joblib.load(MODEL_PATH)
+
+
+with st.spinner("Loading prediction model..."):
+    model = load_model()
+
+
+with open(META_PATH, "r") as file:
+    metadata = json.load(file)
 
 
 st.title(
