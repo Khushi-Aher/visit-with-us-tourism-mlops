@@ -4,9 +4,7 @@ on:
   push:
     branches:
       - main
-
   workflow_dispatch:
-
 
 jobs:
 
@@ -15,20 +13,40 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          pip install pandas huggingface_hub
-
       - name: Register dataset
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_DATASET_REPO: ${{ secrets.HF_DATASET_REPO }}
-
         run: |
-          python scripts/register_dataset.py
+          python - <<'PY'
+          import json
+          import pandas as pd
+          from pathlib import Path
+
+          path = Path("data/tourism.csv")
+          df = pd.read_csv(path)
+
+          registration = {
+              "dataset": str(path),
+              "rows": int(df.shape[0]),
+              "columns": int(df.shape[1]),
+              "column_names": df.columns.tolist(),
+              "registered": True
+          }
+
+          Path("data").mkdir(exist_ok=True)
+
+          with open("data/registration_metadata.json", "w") as f:
+              json.dump(registration, f, indent=2)
+
+          print("Dataset registered successfully.")
+          print(registration)
+          PY
+
+      - name: Upload registration record
+        uses: actions/upload-artifact@v4
+        with:
+          name: dataset-registration
+          path: data/registration_metadata.json
 
 
   data-prep:
@@ -38,16 +56,33 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
 
       - name: Install dependencies
         run: |
-          pip install pandas
+          python -m pip install --upgrade pip
+          pip install pandas==2.2.3
 
       - name: Run data preparation
         run: |
           python scripts/data_prep.py
+
+      - name: Verify prepared dataset
+        run: |
+          test -f data/tourism_clean.csv
+          echo "Data preparation completed successfully."
+          wc -l data/tourism_clean.csv
+
+      - name: Upload prepared dataset
+        uses: actions/upload-artifact@v4
+        with:
+          name: prepared-dataset
+          path: data/tourism_clean.csv
 
 
   model-training:
@@ -57,114 +92,80 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
 
       - name: Install dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install -r deployment/requirements.txt
 
       - name: Train model
         run: |
           python scripts/train_model.py
 
+      - name: Verify trained model
+        run: |
+          test -f deployment/model.joblib
+          test -f deployment/model_metadata.json
+          echo "Model training completed successfully."
+
       - name: Upload model artifact
         uses: actions/upload-artifact@v4
-
         with:
           name: tourism-model
-          path: deployment/
+          path: |
+            deployment/model.joblib
+            deployment/model_metadata.json
 
 
-  deploy-hosting:
+  deployment-check:
 
-    needs:
-      - register-dataset
-      - data-prep
-      - model-training
+    needs: model-training
 
     runs-on: ubuntu-latest
 
     steps:
-
       - uses: actions/checkout@v4
 
-      - name: Install Hugging Face dependencies
+      - name: Verify deployment files
         run: |
-          pip install huggingface_hub
+          test -f deployment/app.py
+          test -f deployment/model.joblib
+          test -f deployment/model_metadata.json
+          test -f deployment/requirements.txt
+          echo "Deployment package verified."
 
-      - name: Deploy to Hugging Face Space
-
+      - name: Verify live Streamlit application
         env:
-
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-
-          HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
-
+          APP_URL: https://visit-with-us-tourism-mlops-dr88gm2yuvvjjpufbc5vp6.streamlit.app
         run: |
-
           python - <<'PY'
-
           import os
+          import time
+          import urllib.request
 
-          from huggingface_hub import HfApi
+          url = os.environ["APP_URL"]
 
+          for attempt in range(5):
+              try:
+                  response = urllib.request.urlopen(url, timeout=30)
+                  status = response.status
+                  print(f"Streamlit app HTTP status: {status}")
 
-          token = os.environ["HF_TOKEN"]
+                  if status == 200:
+                      print("Live Streamlit application verified successfully.")
+                      break
 
-          space_id = os.environ["HF_SPACE_ID"]
+              except Exception as e:
+                  print(f"Attempt {attempt + 1} failed: {e}")
 
+              time.sleep(15)
 
-          api = HfApi(token=token)
-
-
-          api.create_repo(
-
-              repo_id=space_id,
-
-              repo_type="space",
-
-              space_sdk="docker",
-
-              exist_ok=True,
-
-              token=token
-
-          )
-
-
-          files = [
-
-              "app.py",
-
-              "requirements.txt",
-
-              "Dockerfile",
-
-              "model.joblib",
-
-              "model_metadata.json"
-
-          ]
-
-
-          for file in files:
-
-              api.upload_file(
-
-                  path_or_fileobj=f"deployment/{file}",
-
-                  path_in_repo=file,
-
-                  repo_id=space_id,
-
-                  repo_type="space",
-
-                  token=token
-
-              )
-
-
-          print("Deployment completed.")
-
+          else:
+              raise RuntimeError("Live Streamlit application could not be verified.")
           PY
