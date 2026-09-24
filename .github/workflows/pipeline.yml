@@ -1,0 +1,170 @@
+name: Tourism Project Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+
+jobs:
+
+  register-dataset:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          pip install pandas huggingface_hub
+
+      - name: Register dataset
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_DATASET_REPO: ${{ secrets.HF_DATASET_REPO }}
+
+        run: |
+          python scripts/register_dataset.py
+
+
+  data-prep:
+
+    needs: register-dataset
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          pip install pandas
+
+      - name: Run data preparation
+        run: |
+          python scripts/data_prep.py
+
+
+  model-training:
+
+    needs: data-prep
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          pip install -r deployment/requirements.txt
+
+      - name: Train model
+        run: |
+          python scripts/train_model.py
+
+      - name: Upload model artifact
+        uses: actions/upload-artifact@v4
+
+        with:
+          name: tourism-model
+          path: deployment/
+
+
+  deploy-hosting:
+
+    needs:
+      - register-dataset
+      - data-prep
+      - model-training
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install Hugging Face dependencies
+        run: |
+          pip install huggingface_hub
+
+      - name: Deploy to Hugging Face Space
+
+        env:
+
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+          HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
+
+        run: |
+
+          python - <<'PY'
+
+          import os
+
+          from huggingface_hub import HfApi
+
+
+          token = os.environ["HF_TOKEN"]
+
+          space_id = os.environ["HF_SPACE_ID"]
+
+
+          api = HfApi(token=token)
+
+
+          api.create_repo(
+
+              repo_id=space_id,
+
+              repo_type="space",
+
+              space_sdk="docker",
+
+              exist_ok=True,
+
+              token=token
+
+          )
+
+
+          files = [
+
+              "app.py",
+
+              "requirements.txt",
+
+              "Dockerfile",
+
+              "model.joblib",
+
+              "model_metadata.json"
+
+          ]
+
+
+          for file in files:
+
+              api.upload_file(
+
+                  path_or_fileobj=f"deployment/{file}",
+
+                  path_in_repo=file,
+
+                  repo_id=space_id,
+
+                  repo_type="space",
+
+                  token=token
+
+              )
+
+
+          print("Deployment completed.")
+
+          PY
